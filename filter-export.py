@@ -34,10 +34,10 @@ class MattermostFilter:
         teams: bool = False,
         role: Optional[List[str]] = None,
         roles: bool = False,
-        channel: Optional[List[str]] = None,
-        channels: bool = False,
         user: Optional[List[str]] = None,
         users: bool = False,
+        channel: Optional[List[str]] = None,
+        channels: bool = False,
         post: Optional[List[str]] = None,
         posts: bool = False,
         direct_channel: Optional[List[str]] = None,
@@ -61,14 +61,14 @@ class MattermostFilter:
         :type role: Optional[List[str]]
         :param roles: If True, whitelist all role entries.
         :type roles: bool
-        :param channel: List of channel team:name strings to whitelist.
-        :type channel: Optional[List[str]]
-        :param channels: If True, whitelist all channel entries.
-        :type channels: bool
         :param user: List of usernames to whitelist.
         :type user: Optional[List[str]]
         :param users: If True, whitelist all user entries.
         :type users: bool
+        :param channel: List of channel team:name strings to whitelist.
+        :type channel: Optional[List[str]]
+        :param channels: If True, whitelist all channel entries.
+        :type channels: bool
         :param post: List of post team:channel strings to whitelist.
         :type post: Optional[List[str]]
         :param posts: If True, whitelist all post entries.
@@ -90,10 +90,10 @@ class MattermostFilter:
         self.teams = teams
         self.role = role or []
         self.roles = roles
-        self.channel = channel or []
-        self.channels = channels
         self.user = user or []
         self.users = users
+        self.channel = channel or []
+        self.channels = channels
         self.post = post or []
         self.posts = posts
         self.direct_channel = direct_channel or []
@@ -170,10 +170,10 @@ class MattermostFilter:
             return self._filter_team(entry)
         if entry_type == "role":
             return self._filter_role(entry)
-        if entry_type == "channel":
-            return self._filter_channel(entry)
         if entry_type == "user":
             return self._filter_user(entry)
+        if entry_type == "channel":
+            return self._filter_channel(entry)
         if entry_type == "post":
             return self._filter_post(entry)
         if entry_type == "direct_channel":
@@ -227,6 +227,28 @@ class MattermostFilter:
         logging.debug(f"Role '{role_name}' does not match filter, excluding.")
         return False
 
+    def _filter_user(self, entry: Dict[str, Any]) -> bool:
+        """
+        Filters a user entry based on the provided usernames or the users flag.
+
+        :param entry: The user entry to filter.
+        :type entry: Dict[str, Any]
+        :return: True if the entry should be included, False otherwise.
+        :rtype: bool
+        """
+        if self.users:
+            logging.debug("Users flag is set, including all user entries.")
+            return True
+        if not self.user:
+            logging.debug("No user filter specified, excluding user entry.")
+            return False
+        username = entry.get("user", {}).get("username")
+        if username in self.user:
+            logging.debug(f"User '{username}' matches filter, including.")
+            return True
+        logging.debug(f"User '{username}' does not match filter, excluding.")
+        return False
+
     def _filter_channel(self, entry: Dict[str, Any]) -> bool:
         """
         Filters a channel entry based on the provided team:name strings or the channels flag.
@@ -254,28 +276,6 @@ class MattermostFilter:
         logging.debug(
             f"Channel '{channel_team}:{channel_name}' does not match filter, excluding."
         )
-        return False
-
-    def _filter_user(self, entry: Dict[str, Any]) -> bool:
-        """
-        Filters a user entry based on the provided usernames or the users flag.
-
-        :param entry: The user entry to filter.
-        :type entry: Dict[str, Any]
-        :return: True if the entry should be included, False otherwise.
-        :rtype: bool
-        """
-        if self.users:
-            logging.debug("Users flag is set, including all user entries.")
-            return True
-        if not self.user:
-            logging.debug("No user filter specified, excluding user entry.")
-            return False
-        username = entry.get("user", {}).get("username")
-        if username in self.user:
-            logging.debug(f"User '{username}' matches filter, including.")
-            return True
-        logging.debug(f"User '{username}' does not match filter, excluding.")
         return False
 
     def _filter_post(self, entry: Dict[str, Any]) -> bool:
@@ -420,17 +420,6 @@ def main() -> int:
         help="Whitelist all role entries.",
     )
     parser.add_argument(
-        "--channel",
-        type=str,
-        action="append",
-        help="Whitelist channel entries with a matching team:name. Can be specified multiple times.",
-    )
-    parser.add_argument(
-        "--channels",
-        action="store_true",
-        help="Whitelist all channel entries.",
-    )
-    parser.add_argument(
         "--user",
         type=str,
         action="append",
@@ -440,6 +429,17 @@ def main() -> int:
         "--users",
         action="store_true",
         help="Whitelist all user entries.",
+    )
+    parser.add_argument(
+        "--channel",
+        type=str,
+        action="append",
+        help="Whitelist channel entries with a matching team:name. Can be specified multiple times.",
+    )
+    parser.add_argument(
+        "--channels",
+        action="store_true",
+        help="Whitelist all channel entries.",
     )
     parser.add_argument(
         "--post",
@@ -481,8 +481,8 @@ def main() -> int:
     if (
         (args.team and args.teams)
         or (args.role and args.roles)
-        or (args.channel and args.channels)
         or (args.user and args.users)
+        or (args.channel and args.channels)
         or (args.post and args.posts)
         or (args.direct_channel and args.direct_channels)
         or (args.direct_post and args.direct_posts)
@@ -500,10 +500,10 @@ def main() -> int:
             teams=args.teams,
             role=args.role,
             roles=args.roles,
-            channel=args.channel,
-            channels=args.channels,
             user=args.user,
             users=args.users,
+            channel=args.channel,
+            channels=args.channels,
             post=args.post,
             posts=args.posts,
             direct_channel=args.direct_channel,
