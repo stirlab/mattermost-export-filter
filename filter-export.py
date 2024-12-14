@@ -25,6 +25,29 @@ class MattermostFilter:
     """
     Encapsulates the core functionality of the Mattermost JSONL filter script.
     """
+    # Type constants
+    TYPE_KEY = "type"
+    VERSION_TYPE = "version"
+    TEAM_TYPE = "team"
+    ROLE_TYPE = "role"
+    USER_TYPE = "user"
+    CHANNEL_TYPE = "channel"
+    POST_TYPE = "post"
+    DIRECT_CHANNEL_TYPE = "direct_channel"
+    DIRECT_POST_TYPE = "direct_post"
+
+    # Common dictionary keys
+    TEAM_KEY = "team"
+    ROLE_KEY = "role"
+    USER_KEY = "user"
+    CHANNEL_KEY = "channel"
+    POST_KEY = "post"
+    DIRECT_CHANNEL_KEY = "direct_channel"
+    DIRECT_POST_KEY = "direct_post"
+    NAME_KEY = "name"
+    USERNAME_KEY = "username"
+    MEMBERS_KEY = "members"
+    CHANNEL_MEMBERS_KEY = "channel_members"
 
     def __init__(
         self,
@@ -96,12 +119,24 @@ class MattermostFilter:
         self.channels = channels
         self.post = post or []
         self.posts = posts
-        self.direct_channel = direct_channel or []
+        self.direct_channel = [frozenset(dc.split(':')) for dc in (direct_channel or [])]
         self.direct_channels = direct_channels
-        self.direct_post = direct_post or []
+        self.direct_post = [frozenset(dp.split(':')) for dp in (direct_post or [])]
         self.direct_posts = direct_posts
         self.debug = debug
         self.version_entry: Optional[Dict[str, Any]] = None
+        
+        # Setup dispatch dictionary for filter methods
+        self._filter_dispatch = {
+            self.TEAM_TYPE: self._filter_team,
+            self.ROLE_TYPE: self._filter_role,
+            self.USER_TYPE: self._filter_user,
+            self.CHANNEL_TYPE: self._filter_channel,
+            self.POST_TYPE: self._filter_post,
+            self.DIRECT_CHANNEL_TYPE: self._filter_direct_channel,
+            self.DIRECT_POST_TYPE: self._filter_direct_post,
+        }
+        
         self._setup_logging()
 
     def _setup_logging(self) -> None:
@@ -116,6 +151,42 @@ class MattermostFilter:
         )
         logging.debug("Logging setup complete.")
 
+    def _process_version_entry(self, entry: Dict[str, Any], outfile) -> None:
+        """
+        Handle version entry processing and writing.
+
+        :param entry: The version entry to process
+        :type entry: Dict[str, Any]
+        :param outfile: The output file handle
+        """
+        self.version_entry = entry
+        logging.debug(f"Found version entry: {self.version_entry}")
+        outfile.write(json.dumps(self.version_entry) + "\n")
+
+    def _process_line(self, line: str, line_number: int, outfile) -> None:
+        """
+        Process a single line from the JSONL file.
+
+        :param line: The line to process
+        :type line: str
+        :param line_number: The current line number
+        :type line_number: int
+        :param outfile: The output file handle
+        """
+        try:
+            entry = json.loads(line)
+            logging.debug(f"Processing line {line_number}: {entry.get('type', 'no type')}")
+            
+            if entry.get("type") == "version":
+                self._process_version_entry(entry, outfile)
+            elif self._filter_entry(entry):
+                outfile.write(json.dumps(entry) + "\n")
+                logging.debug(f"Line {line_number} included in output.")
+            else:
+                logging.debug(f"Line {line_number} excluded from output.")
+        except json.JSONDecodeError as e:
+            logging.error(f"JSONDecodeError on line {line_number}: {e}")
+
     def _read_and_filter_jsonl(self) -> None:
         """
         Reads the input JSONL file line by line, filters each entry, and
@@ -127,23 +198,7 @@ class MattermostFilter:
                 self.output_filepath, "w", encoding="utf-8"
             ) as outfile:
                 for line_number, line in enumerate(infile, start=1):
-                    try:
-                        entry = json.loads(line)
-                        logging.debug(
-                            f"Processing line {line_number}: {entry.get('type', 'no type')}"
-                        )
-                        if entry.get("type") == "version":
-                            self.version_entry = entry
-                            logging.debug(f"Found version entry: {self.version_entry}")
-                            outfile.write(json.dumps(self.version_entry) + "\n")
-                        elif self._filter_entry(entry):
-                            outfile.write(json.dumps(entry) + "\n")
-                            logging.debug(f"Line {line_number} included in output.")
-                        else:
-                            logging.debug(f"Line {line_number} excluded from output.")
-                    except json.JSONDecodeError as e:
-                        logging.error(f"JSONDecodeError on line {line_number}: {e}")
-                        continue
+                    self._process_line(line, line_number, outfile)
         except FileNotFoundError:
             logging.error(f"Input file not found: {self.jsonl_filepath}")
             exit(1)
@@ -161,25 +216,15 @@ class MattermostFilter:
         :return: True if the entry should be included, False otherwise.
         :rtype: bool
         """
-        entry_type = entry.get("type")
+        entry_type = entry.get(self.TYPE_KEY)
         if not entry_type:
             logging.debug("Entry has no type, excluding.")
             return False
 
-        if entry_type == "team":
-            return self._filter_team(entry)
-        if entry_type == "role":
-            return self._filter_role(entry)
-        if entry_type == "user":
-            return self._filter_user(entry)
-        if entry_type == "channel":
-            return self._filter_channel(entry)
-        if entry_type == "post":
-            return self._filter_post(entry)
-        if entry_type == "direct_channel":
-            return self._filter_direct_channel(entry)
-        if entry_type == "direct_post":
-            return self._filter_direct_post(entry)
+        filter_func = self._filter_dispatch.get(entry_type)
+        if filter_func:
+            return filter_func(entry)
+
         logging.debug(f"Entry type '{entry_type}' not handled, excluding.")
         return False
 
@@ -198,7 +243,7 @@ class MattermostFilter:
         if not self.team:
             logging.debug("No team filter specified, excluding team entry.")
             return False
-        team_name = entry.get("team", {}).get("name")
+        team_name = entry.get(self.TEAM_KEY, {}).get(self.NAME_KEY)
         if team_name in self.team:
             logging.debug(f"Team '{team_name}' matches filter, including.")
             return True
@@ -220,7 +265,7 @@ class MattermostFilter:
         if not self.role:
             logging.debug("No role filter specified, excluding role entry.")
             return False
-        role_name = entry.get("role", {}).get("name")
+        role_name = entry.get(self.ROLE_KEY, {}).get(self.NAME_KEY)
         if role_name in self.role:
             logging.debug(f"Role '{role_name}' matches filter, including.")
             return True
@@ -242,7 +287,7 @@ class MattermostFilter:
         if not self.user:
             logging.debug("No user filter specified, excluding user entry.")
             return False
-        username = entry.get("user", {}).get("username")
+        username = entry.get(self.USER_KEY, {}).get(self.USERNAME_KEY)
         if username in self.user:
             logging.debug(f"User '{username}' matches filter, including.")
             return True
@@ -264,8 +309,8 @@ class MattermostFilter:
         if not self.channel:
             logging.debug("No channel filter specified, excluding channel entry.")
             return False
-        channel_team = entry.get("channel", {}).get("team")
-        channel_name = entry.get("channel", {}).get("name")
+        channel_team = entry.get(self.CHANNEL_KEY, {}).get(self.TEAM_KEY)
+        channel_name = entry.get(self.CHANNEL_KEY, {}).get(self.NAME_KEY)
         if channel_team and channel_name:
             channel_team_name = f"{channel_team}:{channel_name}"
             if channel_team_name in self.channel:
@@ -293,8 +338,8 @@ class MattermostFilter:
         if not self.post:
             logging.debug("No post filter specified, excluding post entry.")
             return False
-        post_team = entry.get("post", {}).get("team")
-        post_channel = entry.get("post", {}).get("channel")
+        post_team = entry.get(self.POST_KEY, {}).get(self.TEAM_KEY)
+        post_channel = entry.get(self.POST_KEY, {}).get(self.CHANNEL_KEY)
         if post_team and post_channel:
             post_team_channel = f"{post_team}:{post_channel}"
             if post_team_channel in self.post:
@@ -324,12 +369,12 @@ class MattermostFilter:
                 "No direct channel filter specified, excluding direct channel entry."
             )
             return False
-        members = entry.get("direct_channel", {}).get("members")
+        members = entry.get(self.DIRECT_CHANNEL_KEY, {}).get(self.MEMBERS_KEY)
         if members and isinstance(members, list):
-            members_str = ":".join(sorted(members))
-            if members_str in self.direct_channel:
+            members_set = frozenset(members)
+            if members_set in self.direct_channel:
                 logging.debug(
-                    f"Direct channel with members '{members_str}' matches filter, including."
+                    f"Direct channel with members '{sorted(members)}' matches filter, including."
                 )
                 return True
         logging.debug(
@@ -356,12 +401,12 @@ class MattermostFilter:
                 "No direct post filter specified, excluding direct post entry."
             )
             return False
-        channel_members = entry.get("direct_post", {}).get("channel_members")
+        channel_members = entry.get(self.DIRECT_POST_KEY, {}).get(self.CHANNEL_MEMBERS_KEY)
         if channel_members and isinstance(channel_members, list):
-            members_str = ":".join(sorted(channel_members))
-            if members_str in self.direct_post:
+            members_set = frozenset(channel_members)
+            if members_set in self.direct_post:
                 logging.debug(
-                    f"Direct post with members '{members_str}' matches filter, including."
+                    f"Direct post with members '{sorted(channel_members)}' matches filter, including."
                 )
                 return True
         logging.debug(
@@ -378,12 +423,12 @@ class MattermostFilter:
         logging.debug("Mattermost JSONL filtering process completed.")
 
 
-def main() -> int:
+def _setup_argument_parser() -> argparse.ArgumentParser:
     """
-    Main function to parse command-line arguments and run the Mattermost filter.
+    Set up and return the argument parser with all arguments configured.
 
-    :return: Exit code (0 for success, 1 for failure).
-    :rtype: int
+    :return: Configured argument parser
+    :rtype: argparse.ArgumentParser
     """
     parser = argparse.ArgumentParser(
         description="Filters a Mattermost JSONL export file based on specified criteria."
@@ -397,6 +442,8 @@ def main() -> int:
         help="Path to the output JSONL file.",
         default=Path("filtered_output.jsonl"),
     )
+    
+    # Team arguments
     parser.add_argument(
         "--team",
         type=str,
@@ -408,6 +455,8 @@ def main() -> int:
         action="store_true",
         help="Whitelist all team entries.",
     )
+    
+    # Role arguments
     parser.add_argument(
         "--role",
         type=str,
@@ -419,6 +468,8 @@ def main() -> int:
         action="store_true",
         help="Whitelist all role entries.",
     )
+    
+    # User arguments
     parser.add_argument(
         "--user",
         type=str,
@@ -430,6 +481,8 @@ def main() -> int:
         action="store_true",
         help="Whitelist all user entries.",
     )
+    
+    # Channel arguments
     parser.add_argument(
         "--channel",
         type=str,
@@ -441,6 +494,8 @@ def main() -> int:
         action="store_true",
         help="Whitelist all channel entries.",
     )
+    
+    # Post arguments
     parser.add_argument(
         "--post",
         type=str,
@@ -452,6 +507,8 @@ def main() -> int:
         action="store_true",
         help="Whitelist all post entries.",
     )
+    
+    # Direct channel arguments
     parser.add_argument(
         "--direct-channel",
         type=str,
@@ -463,6 +520,8 @@ def main() -> int:
         action="store_true",
         help="Whitelist all direct channel entries.",
     )
+    
+    # Direct post arguments
     parser.add_argument(
         "--direct-post",
         type=str,
@@ -474,24 +533,45 @@ def main() -> int:
         action="store_true",
         help="Whitelist all direct post entries.",
     )
+    
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
+    
+    return parser
 
-    args = parser.parse_args()
+def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """
+    Validate command line arguments for conflicting options.
 
-    if (
-        (args.team and args.teams)
-        or (args.role and args.roles)
-        or (args.user and args.users)
-        or (args.channel and args.channels)
-        or (args.post and args.posts)
-        or (args.direct_channel and args.direct_channels)
-        or (args.direct_post and args.direct_posts)
-    ):
+    :param args: Parsed command line arguments
+    :type args: argparse.Namespace
+    :param parser: Argument parser for error reporting
+    :type parser: argparse.ArgumentParser
+    :raises: argparse.ArgumentError if validation fails
+    """
+    conflicting_pairs = [
+        (args.team, args.teams),
+        (args.role, args.roles),
+        (args.user, args.users),
+        (args.channel, args.channels),
+        (args.post, args.posts),
+        (args.direct_channel, args.direct_channels),
+        (args.direct_post, args.direct_posts),
+    ]
+    
+    if any(pair[0] and pair[1] for pair in conflicting_pairs):
         parser.error(
             "You cannot use both singular and plural versions of the same filter argument."
         )
-        return 1
 
+def _run_filter(args: argparse.Namespace) -> int:
+    """
+    Create and run the MattermostFilter with the provided arguments.
+
+    :param args: Parsed command line arguments
+    :type args: argparse.Namespace
+    :return: Exit code (0 for success, 1 for failure)
+    :rtype: int
+    """
     try:
         filter_obj = MattermostFilter(
             jsonl_filepath=args.jsonl_filepath,
@@ -515,6 +595,23 @@ def main() -> int:
         filter_obj.run()
         logging.info(f"Filtered output written to: {args.output}")
         return 0
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+        return 1
+
+def main() -> int:
+    """
+    Main function to parse command-line arguments and run the Mattermost filter.
+
+    :return: Exit code (0 for success, 1 for failure).
+    :rtype: int
+    """
+    parser = _setup_argument_parser()
+    args = parser.parse_args()
+    
+    try:
+        _validate_args(args, parser)
+        return _run_filter(args)
     except Exception as e:
         logging.error(f"An error occurred: {e}")
         return 1
