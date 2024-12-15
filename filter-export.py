@@ -25,6 +25,10 @@ class MattermostFilter:
     """
     Encapsulates the core functionality of the Mattermost JSONL filter script.
     """
+    # File and directory constants
+    IMPORT_JSONL = "import.jsonl"
+    DATA_DIR = "data"
+
     # Type constants
     TYPE_KEY = "type"
     VERSION_TYPE = "version"
@@ -35,6 +39,9 @@ class MattermostFilter:
     POST_TYPE = "post"
     DIRECT_CHANNEL_TYPE = "direct_channel"
     DIRECT_POST_TYPE = "direct_post"
+
+    # Statistics constants
+    STATS_ATTACHMENTS = "attachments"
 
     # Common dictionary keys
     TEAM_KEY = "team"
@@ -51,8 +58,8 @@ class MattermostFilter:
 
     def __init__(
         self,
-        jsonl_filepath: Path,
-        output_filepath: Path,
+        input_dir: Path,
+        output_dir: Path,
         team: Optional[List[str]] = None,
         teams: bool = False,
         role: Optional[List[str]] = None,
@@ -67,6 +74,7 @@ class MattermostFilter:
         direct_channels: bool = False,
         direct_post: Optional[List[str]] = None,
         direct_posts: bool = False,
+        include_system_messages: bool = False,
         debug: bool = False,
     ) -> None:
         """
@@ -104,11 +112,17 @@ class MattermostFilter:
         :type direct_post: Optional[List[str]]
         :param direct_posts: If True, whitelist all direct post entries.
         :type direct_posts: bool
+        :param include_system_messages: If True, include system messages.
+        :type include_system_messages: bool
         :param debug: Enable debug logging.
         :type debug: bool
         """
-        self.jsonl_filepath = jsonl_filepath
-        self.output_filepath = output_filepath
+        self.input_dir = input_dir
+        self.output_dir = output_dir
+        self.input_jsonl = input_dir / self.IMPORT_JSONL
+        self.input_data_dir = input_dir / self.DATA_DIR
+        self.output_jsonl = output_dir / self.IMPORT_JSONL
+        self.output_data_dir = output_dir / self.DATA_DIR
         self.team = team or []
         self.teams = teams
         self.role = role or []
@@ -124,8 +138,21 @@ class MattermostFilter:
         self.direct_post = [frozenset(dp.split(':')) for dp in (direct_post or [])]
         self.direct_posts = direct_posts
         self.debug = debug
+        self.include_system_messages = include_system_messages
         self.version_entry: Optional[Dict[str, Any]] = None
-        
+
+        # Initialize statistics
+        self.stats = {
+            self.TEAM_TYPE: 0,
+            self.ROLE_TYPE: 0,
+            self.USER_TYPE: 0,
+            self.CHANNEL_TYPE: 0,
+            self.POST_TYPE: 0,
+            self.DIRECT_CHANNEL_TYPE: 0,
+            self.DIRECT_POST_TYPE: 0,
+            self.STATS_ATTACHMENTS: 0,
+        }
+
         # Setup dispatch dictionary for filter methods
         self._filter_dispatch = {
             self.TEAM_TYPE: self._filter_team,
@@ -136,7 +163,7 @@ class MattermostFilter:
             self.DIRECT_CHANNEL_TYPE: self._filter_direct_channel,
             self.DIRECT_POST_TYPE: self._filter_direct_post,
         }
-        
+
         self._setup_logging()
 
     def _setup_logging(self) -> None:
@@ -176,11 +203,15 @@ class MattermostFilter:
         try:
             entry = json.loads(line)
             logging.debug(f"Processing line {line_number}: {entry.get('type', 'no type')}")
-            
+
             if entry.get("type") == "version":
                 self._process_version_entry(entry, outfile)
             elif self._filter_entry(entry):
                 outfile.write(json.dumps(entry) + "\n")
+                entry_type = entry.get(self.TYPE_KEY)
+                if entry_type in self.stats:
+                    self.stats[entry_type] += 1
+                self._process_attachments(entry)
                 logging.debug(f"Line {line_number} included in output.")
             else:
                 logging.debug(f"Line {line_number} excluded from output.")
@@ -192,10 +223,10 @@ class MattermostFilter:
         Reads the input JSONL file line by line, filters each entry, and
         appends the filtered entries to the output JSONL file.
         """
-        logging.debug(f"Reading input file: {self.jsonl_filepath}")
+        logging.debug(f"Reading input file: {self.input_jsonl}")
         try:
-            with open(self.jsonl_filepath, "r", encoding="utf-8") as infile, open(
-                self.output_filepath, "w", encoding="utf-8"
+            with open(self.input_jsonl, "r", encoding="utf-8") as infile, open(
+                self.output_jsonl, "w", encoding="utf-8"
             ) as outfile:
                 for line_number, line in enumerate(infile, start=1):
                     self._process_line(line, line_number, outfile)
@@ -323,6 +354,22 @@ class MattermostFilter:
         )
         return False
 
+    def _is_system_message(self, entry: Dict[str, Any]) -> bool:
+        """
+        Check if the entry is a system message.
+
+        :param entry: The entry to check
+        :type entry: Dict[str, Any]
+        :return: True if the entry is a system message, False otherwise
+        :rtype: bool
+        """
+        entry_type = entry.get(self.TYPE_KEY)
+        if entry_type == self.POST_TYPE:
+            return bool(entry.get(self.POST_KEY, {}).get("type"))
+        elif entry_type == self.DIRECT_POST_TYPE:
+            return bool(entry.get(self.DIRECT_POST_KEY, {}).get("type"))
+        return False
+
     def _filter_post(self, entry: Dict[str, Any]) -> bool:
         """
         Filters a post entry based on the provided team:channel strings or the posts flag.
@@ -332,6 +379,9 @@ class MattermostFilter:
         :return: True if the entry should be included, False otherwise.
         :rtype: bool
         """
+        if not self.include_system_messages and self._is_system_message(entry):
+            logging.debug("Excluding system message post")
+            return False
         if self.posts:
             logging.debug("Posts flag is set, including all post entries.")
             return True
@@ -391,6 +441,9 @@ class MattermostFilter:
         :return: True if the entry should be included, False otherwise.
         :rtype: bool
         """
+        if not self.include_system_messages and self._is_system_message(entry):
+            logging.debug("Excluding system message direct post")
+            return False
         if self.direct_posts:
             logging.debug(
                 "Direct posts flag is set, including all direct post entries."
@@ -414,12 +467,100 @@ class MattermostFilter:
         )
         return False
 
+    def _setup_directories(self) -> None:
+        """
+        Create output directory structure and validate input directories.
+        """
+        logging.debug(f"Validating input directory structure: {self.input_dir}")
+        if not self.input_dir.is_dir():
+            raise FileNotFoundError(f"Input directory does not exist: {self.input_dir}")
+        if not self.input_jsonl.is_file():
+            raise FileNotFoundError(f"Input JSONL file not found: {self.input_jsonl}")
+        if not self.input_data_dir.is_dir():
+            raise FileNotFoundError(f"Input data directory not found: {self.input_data_dir}")
+
+        logging.debug(f"Creating output directory structure: {self.output_dir}")
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.output_data_dir.mkdir(parents=True, exist_ok=True)
+
+    def _copy_attachment(self, rel_path: str) -> None:
+        """
+        Copy a single attachment file, creating directories as needed.
+
+        :param rel_path: Relative path of the attachment within data directory
+        :type rel_path: str
+        """
+        src_path = self.input_data_dir / rel_path
+        dst_path = self.output_data_dir / rel_path
+        dst_dir = dst_path.parent
+
+        logging.debug(f"Copying attachment: {rel_path}")
+        logging.debug(f"Source path: {src_path}")
+        logging.debug(f"Destination path: {dst_path}")
+
+        try:
+            if not src_path.is_file():
+                logging.error(f"Source attachment file not found: {src_path}")
+                return
+
+            dst_dir.mkdir(parents=True, exist_ok=True)
+
+            import shutil
+            shutil.copy2(src_path, dst_path)
+            self.stats[self.STATS_ATTACHMENTS] += 1
+            logging.debug(f"Successfully copied attachment to: {dst_path}")
+
+        except PermissionError as e:
+            logging.error(f"Permission error copying attachment {rel_path}: {e}")
+        except OSError as e:
+            logging.error(f"OS error copying attachment {rel_path}: {e}")
+        except Exception as e:
+            logging.error(f"Unexpected error copying attachment {rel_path}: {e}")
+
+    def _process_attachments(self, entry: Dict[str, Any]) -> None:
+        """
+        Extract and copy attachments from post/direct_post entries.
+
+        :param entry: The entry to process for attachments
+        :type entry: Dict[str, Any]
+        """
+        entry_type = entry.get(self.TYPE_KEY)
+        if entry_type not in (self.POST_TYPE, self.DIRECT_POST_TYPE):
+            return
+
+        content = entry.get(self.POST_KEY if entry_type == self.POST_TYPE else self.DIRECT_POST_KEY, {})
+        attachments = content.get("attachments", [])
+
+        if attachments:
+            logging.debug(f"Processing {len(attachments)} attachments for {entry_type}")
+            for attachment in attachments:
+                if "path" in attachment:
+                    self._copy_attachment(attachment["path"])
+
+    def _print_statistics(self) -> None:
+        """
+        Print statistics about the filtering operation.
+        """
+        logging.info("Filtering Statistics:")
+        logging.info("--------------------")
+        logging.info(f"Team entries:          {self.stats[self.TEAM_TYPE]}")
+        logging.info(f"Role entries:          {self.stats[self.ROLE_TYPE]}")
+        logging.info(f"User entries:          {self.stats[self.USER_TYPE]}")
+        logging.info(f"Channel entries:       {self.stats[self.CHANNEL_TYPE]}")
+        logging.info(f"Post entries:          {self.stats[self.POST_TYPE]}")
+        logging.info(f"Direct channel entries: {self.stats[self.DIRECT_CHANNEL_TYPE]}")
+        logging.info(f"Direct post entries:   {self.stats[self.DIRECT_POST_TYPE]}")
+        logging.info("--------------------")
+        logging.info(f"Total attachments:     {self.stats[self.STATS_ATTACHMENTS]}")
+
     def run(self) -> None:
         """
         Runs the Mattermost JSONL filtering process.
         """
         logging.debug("Starting Mattermost JSONL filtering process.")
+        self._setup_directories()
         self._read_and_filter_jsonl()
+        self._print_statistics()
         logging.debug("Mattermost JSONL filtering process completed.")
 
 
@@ -434,15 +575,15 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
         description="Filters a Mattermost JSONL export file based on specified criteria."
     )
     parser.add_argument(
-        "jsonl_filepath", type=Path, help="Path to the input JSONL file."
+        "input_dir", type=Path, help="Path to input directory containing data/ and import.jsonl"
     )
     parser.add_argument(
         "--output",
         type=Path,
-        help="Path to the output JSONL file.",
-        default=Path("filtered_output.jsonl"),
+        help="Path to output directory (will contain data/ and import.jsonl)",
+        default=Path("output"),
     )
-    
+
     # Team arguments
     parser.add_argument(
         "--team",
@@ -455,7 +596,7 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Whitelist all team entries.",
     )
-    
+
     # Role arguments
     parser.add_argument(
         "--role",
@@ -468,7 +609,7 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Whitelist all role entries.",
     )
-    
+
     # User arguments
     parser.add_argument(
         "--user",
@@ -481,7 +622,7 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Whitelist all user entries.",
     )
-    
+
     # Channel arguments
     parser.add_argument(
         "--channel",
@@ -494,7 +635,7 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Whitelist all channel entries.",
     )
-    
+
     # Post arguments
     parser.add_argument(
         "--post",
@@ -507,7 +648,7 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Whitelist all post entries.",
     )
-    
+
     # Direct channel arguments
     parser.add_argument(
         "--direct-channel",
@@ -520,7 +661,7 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Whitelist all direct channel entries.",
     )
-    
+
     # Direct post arguments
     parser.add_argument(
         "--direct-post",
@@ -533,9 +674,14 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Whitelist all direct post entries.",
     )
-    
+
+    parser.add_argument(
+        "--include-system-messages",
+        action="store_true",
+        help="Include system messages in post and direct post entries.",
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
-    
+
     return parser
 
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
@@ -557,7 +703,7 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         (args.direct_channel, args.direct_channels),
         (args.direct_post, args.direct_posts),
     ]
-    
+
     if any(pair[0] and pair[1] for pair in conflicting_pairs):
         parser.error(
             "You cannot use both singular and plural versions of the same filter argument."
@@ -574,8 +720,8 @@ def _run_filter(args: argparse.Namespace) -> int:
     """
     try:
         filter_obj = MattermostFilter(
-            jsonl_filepath=args.jsonl_filepath,
-            output_filepath=args.output,
+            input_dir=args.input_dir,
+            output_dir=args.output,
             team=args.team,
             teams=args.teams,
             role=args.role,
@@ -590,6 +736,7 @@ def _run_filter(args: argparse.Namespace) -> int:
             direct_channels=args.direct_channels,
             direct_post=args.direct_post,
             direct_posts=args.direct_posts,
+            include_system_messages=args.include_system_messages,
             debug=args.debug,
         )
         filter_obj.run()
@@ -608,7 +755,7 @@ def main() -> int:
     """
     parser = _setup_argument_parser()
     args = parser.parse_args()
-    
+
     try:
         _validate_args(args, parser)
         return _run_filter(args)
