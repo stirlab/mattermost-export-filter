@@ -22,7 +22,7 @@ This tool allows you to selectively extract specific types of data from a Matter
 ## Prerequisites
 
 - Python 3.9 or higher
-- A directory containing the unzipped Mattermost server export, which contains:
+- A directory containing the unzipped [Mattermost server export](https://docs.mattermost.com/manage/mmctl-command-line-tool.html#mmctl-export), which contains:
   - `import.jsonl` file
   - `data/` directory with attachments
 
@@ -105,9 +105,11 @@ Export a single team, no data:
 ## Output
 
 The tool creates a new Mattermost-compatible export containing:
+
 - Filtered `import.jsonl` file
 - `data/` directory with relevant attachments
-- All required metadata and version information
+
+These can be compressed into a zip file, then [uploaded/imported](https://docs.mattermost.com/manage/mmctl-command-line-tool.html#mmctl-import) to a Mattermost server.
 
 ## Notes
 
