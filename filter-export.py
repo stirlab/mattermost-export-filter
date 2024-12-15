@@ -25,6 +25,7 @@ class MattermostFilter:
     """
     Encapsulates the core functionality of the Mattermost JSONL filter script.
     """
+
     # File and directory constants
     IMPORT_JSONL = "import.jsonl"
     DATA_DIR = "data"
@@ -133,9 +134,11 @@ class MattermostFilter:
         self.channels = channels
         self.post = post or []
         self.posts = posts
-        self.direct_channel = [frozenset(dc.split(':')) for dc in (direct_channel or [])]
+        self.direct_channel = [
+            frozenset(dc.split(":")) for dc in (direct_channel or [])
+        ]
         self.direct_channels = direct_channels
-        self.direct_post = [frozenset(dp.split(':')) for dp in (direct_post or [])]
+        self.direct_post = [frozenset(dp.split(":")) for dp in (direct_post or [])]
         self.direct_posts = direct_posts
         self.debug = debug
         self.include_system_messages = include_system_messages
@@ -202,7 +205,9 @@ class MattermostFilter:
         """
         try:
             entry = json.loads(line)
-            logging.debug(f"Processing line {line_number}: {entry.get('type', 'no type')}")
+            logging.debug(
+                f"Processing line {line_number}: {entry.get('type', 'no type')}"
+            )
 
             if entry.get("type") == "version":
                 self._process_version_entry(entry, outfile)
@@ -454,7 +459,9 @@ class MattermostFilter:
                 "No direct post filter specified, excluding direct post entry."
             )
             return False
-        channel_members = entry.get(self.DIRECT_POST_KEY, {}).get(self.CHANNEL_MEMBERS_KEY)
+        channel_members = entry.get(self.DIRECT_POST_KEY, {}).get(
+            self.CHANNEL_MEMBERS_KEY
+        )
         if channel_members and isinstance(channel_members, list):
             members_set = frozenset(channel_members)
             if members_set in self.direct_post:
@@ -477,7 +484,9 @@ class MattermostFilter:
         if not self.input_jsonl.is_file():
             raise FileNotFoundError(f"Input JSONL file not found: {self.input_jsonl}")
         if not self.input_data_dir.is_dir():
-            raise FileNotFoundError(f"Input data directory not found: {self.input_data_dir}")
+            raise FileNotFoundError(
+                f"Input data directory not found: {self.input_data_dir}"
+            )
 
         logging.debug(f"Creating output directory structure: {self.output_dir}")
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -506,6 +515,7 @@ class MattermostFilter:
             dst_dir.mkdir(parents=True, exist_ok=True)
 
             import shutil
+
             shutil.copy2(src_path, dst_path)
             self.stats[self.STATS_ATTACHMENTS] += 1
             logging.debug(f"Successfully copied attachment to: {dst_path}")
@@ -528,7 +538,9 @@ class MattermostFilter:
         if entry_type not in (self.POST_TYPE, self.DIRECT_POST_TYPE):
             return
 
-        content = entry.get(self.POST_KEY if entry_type == self.POST_TYPE else self.DIRECT_POST_KEY, {})
+        content = entry.get(
+            self.POST_KEY if entry_type == self.POST_TYPE else self.DIRECT_POST_KEY, {}
+        )
         attachments = content.get("attachments", [])
 
         if attachments:
@@ -575,7 +587,9 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
         description="Filters a Mattermost JSONL export file based on specified criteria."
     )
     parser.add_argument(
-        "input_dir", type=Path, help="Path to input directory containing data/ and import.jsonl"
+        "input_dir",
+        type=Path,
+        help="Path to input directory containing data/ and import.jsonl",
     )
     parser.add_argument(
         "--output",
@@ -684,6 +698,7 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
 
     return parser
 
+
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     """
     Validate command line arguments for conflicting options.
@@ -708,6 +723,7 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error(
             "You cannot use both singular and plural versions of the same filter argument."
         )
+
 
 def _run_filter(args: argparse.Namespace) -> int:
     """
@@ -745,6 +761,7 @@ def _run_filter(args: argparse.Namespace) -> int:
     except Exception as e:
         logging.error(f"An error occurred: {e}")
         return 1
+
 
 def main() -> int:
     """
