@@ -52,30 +52,37 @@ You can combine multiple filter options. Each filter type has two forms:
 - Include all with `--options` (plural form)
 
 #### Team Filtering
+
 - `--team <team-name>` - Include specific team(s)
 - `--teams` - Include all teams
 
 #### Role Filtering
+
 - `--role <role-name>` - Include specific role(s)
 - `--roles` - Include all roles
 
 #### User Filtering
+
 - `--user <username>` - Include specific user(s)
 - `--users` - Include all users
 
 #### Channel Filtering
+
 - `--channel <team:channel>` - Include specific channel(s)
 - `--channels` - Include all channels
 
 #### Post Filtering
+
 - `--post <team:channel>` - Include posts from specific channel(s)
 - `--posts` - Include all posts
 
 #### Direct Channel Filtering
+
 - `--direct-channel <user1:user2>` - Include specific direct channel(s)
 - `--direct-channels` - Include all direct channels
 
 #### Direct Post Filtering
+
 - `--direct-post <user1:user2>` - Include direct posts between specific users
 - `--direct-posts` - Include all direct posts
 
@@ -88,16 +95,19 @@ You can combine multiple filter options. Each filter type has two forms:
 ### Examples
 
 Include all posts from a specific channel:
+
 ```bash
 ./filter-export.py mattermost-export --post "engineering:general"
 ```
 
 Export all data for specific users:
+
 ```bash
 ./filter-export.py mattermost-export --user john.doe --user jane.smith
 ```
 
 Export a single team, no data:
+
 ```bash
 ./filter-export.py mattermost-export --team engineering
 ```
@@ -105,7 +115,6 @@ Export a single team, no data:
 ## Output
 
 The tool creates a new Mattermost-compatible export containing:
-
 - Filtered `import.jsonl` file
 - `data/` directory with relevant attachments
 
@@ -123,7 +132,3 @@ These can be compressed into a zip file, then [uploaded/imported](https://docs.m
 - Invalid input directory structure will raise appropriate errors
 - Missing attachments are logged but won't stop processing
 - Conflicting filter options (e.g., --user and --users) will raise an error
-
-## License
-
-[Insert your license information here]
