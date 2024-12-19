@@ -10,6 +10,7 @@ This tool allows you to selectively extract specific types of data from a Matter
   - Teams
   - Roles
   - Users
+  - Bots
   - Channels
   - Posts
   - Direct channels
@@ -65,6 +66,11 @@ You can combine multiple filter options. Each filter type has two forms:
 
 - `--user <username>` - Include specific user(s)
 - `--users` - Include all users
+
+#### Bot Filtering
+
+- `--bot <username>` - Include specific bot(s)
+- `--bots` - Include all bots
 
 #### Channel Filtering
 

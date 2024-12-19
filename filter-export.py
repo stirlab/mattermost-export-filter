@@ -36,6 +36,7 @@ class MattermostFilter:
     TEAM_TYPE = "team"
     ROLE_TYPE = "role"
     USER_TYPE = "user"
+    BOT_TYPE = "bot"
     CHANNEL_TYPE = "channel"
     POST_TYPE = "post"
     DIRECT_CHANNEL_TYPE = "direct_channel"
@@ -48,6 +49,7 @@ class MattermostFilter:
     TEAM_KEY = "team"
     ROLE_KEY = "role"
     USER_KEY = "user"
+    BOT_KEY = "bot"
     CHANNEL_KEY = "channel"
     POST_KEY = "post"
     DIRECT_CHANNEL_KEY = "direct_channel"
@@ -67,6 +69,8 @@ class MattermostFilter:
         roles: bool = False,
         user: Optional[List[str]] = None,
         users: bool = False,
+        bot: Optional[List[str]] = None,
+        bots: bool = False,
         channel: Optional[List[str]] = None,
         channels: bool = False,
         post: Optional[List[str]] = None,
@@ -97,6 +101,10 @@ class MattermostFilter:
         :type user: Optional[List[str]]
         :param users: If True, whitelist all user entries.
         :type users: bool
+        :param bot: List of bot usernames to whitelist.
+        :type bot: Optional[List[str]]
+        :param bots: If True, whitelist all bot entries.
+        :type bots: bool
         :param channel: List of channel team:name strings to whitelist.
         :type channel: Optional[List[str]]
         :param channels: If True, whitelist all channel entries.
@@ -130,6 +138,8 @@ class MattermostFilter:
         self.roles = roles
         self.user = user or []
         self.users = users
+        self.bot = bot or []
+        self.bots = bots
         self.channel = channel or []
         self.channels = channels
         self.post = post or []
@@ -149,6 +159,7 @@ class MattermostFilter:
             self.TEAM_TYPE: 0,
             self.ROLE_TYPE: 0,
             self.USER_TYPE: 0,
+            self.BOT_TYPE: 0,
             self.CHANNEL_TYPE: 0,
             self.POST_TYPE: 0,
             self.DIRECT_CHANNEL_TYPE: 0,
@@ -161,6 +172,7 @@ class MattermostFilter:
             self.TEAM_TYPE: self._filter_team,
             self.ROLE_TYPE: self._filter_role,
             self.USER_TYPE: self._filter_user,
+            self.BOT_TYPE: self._filter_bot,
             self.CHANNEL_TYPE: self._filter_channel,
             self.POST_TYPE: self._filter_post,
             self.DIRECT_CHANNEL_TYPE: self._filter_direct_channel,
@@ -328,6 +340,28 @@ class MattermostFilter:
             logging.debug(f"User '{username}' matches filter, including.")
             return True
         logging.debug(f"User '{username}' does not match filter, excluding.")
+        return False
+
+    def _filter_bot(self, entry: Dict[str, Any]) -> bool:
+        """
+        Filters a bot entry based on the provided usernames or the bots flag.
+
+        :param entry: The bot entry to filter.
+        :type entry: Dict[str, Any]
+        :return: True if the entry should be included, False otherwise.
+        :rtype: bool
+        """
+        if self.bots:
+            logging.debug("Bots flag is set, including all bot entries.")
+            return True
+        if not self.bot:
+            logging.debug("No bot filter specified, excluding bot entry.")
+            return False
+        username = entry.get(self.BOT_KEY, {}).get(self.USERNAME_KEY)
+        if username in self.bot:
+            logging.debug(f"Bot '{username}' matches filter, including.")
+            return True
+        logging.debug(f"Bot '{username}' does not match filter, excluding.")
         return False
 
     def _filter_channel(self, entry: Dict[str, Any]) -> bool:
@@ -558,6 +592,7 @@ class MattermostFilter:
         logging.info(f"Team entries:          {self.stats[self.TEAM_TYPE]}")
         logging.info(f"Role entries:          {self.stats[self.ROLE_TYPE]}")
         logging.info(f"User entries:          {self.stats[self.USER_TYPE]}")
+        logging.info(f"Bot entries:           {self.stats[self.BOT_TYPE]}")
         logging.info(f"Channel entries:       {self.stats[self.CHANNEL_TYPE]}")
         logging.info(f"Post entries:          {self.stats[self.POST_TYPE]}")
         logging.info(f"Direct channel entries: {self.stats[self.DIRECT_CHANNEL_TYPE]}")
@@ -637,6 +672,19 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
         help="Whitelist all user entries.",
     )
 
+    # Bot arguments
+    parser.add_argument(
+        "--bot",
+        type=str,
+        action="append",
+        help="Whitelist bot entries with a matching username. Can be specified multiple times.",
+    )
+    parser.add_argument(
+        "--bots",
+        action="store_true",
+        help="Whitelist all bot entries.",
+    )
+
     # Channel arguments
     parser.add_argument(
         "--channel",
@@ -713,6 +761,7 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         (args.team, args.teams),
         (args.role, args.roles),
         (args.user, args.users),
+        (args.bot, args.bots),
         (args.channel, args.channels),
         (args.post, args.posts),
         (args.direct_channel, args.direct_channels),
@@ -744,6 +793,8 @@ def _run_filter(args: argparse.Namespace) -> int:
             roles=args.roles,
             user=args.user,
             users=args.users,
+            bot=args.bot,
+            bots=args.bots,
             channel=args.channel,
             channels=args.channels,
             post=args.post,

@@ -39,6 +39,13 @@ The data is in JSONL format, meaning each line is a valid JSON object. This is g
      * `teams`: An array of teams the user belongs to, with roles and channel information.
      * `notify_props`: Notification preferences for the user.
      * `custom_status`: Optional custom status information.
+ * **`bot`**: Represents a bot account in the system.
+   * `bot`:
+     * `username`: The unique username of the bot.
+     * `owner`: The username of the user who owns/created the bot.
+     * `display_name`: A human-readable name for the bot.
+     * `description`: A description of the bot's purpose.
+     * `delete_at`: A timestamp indicating when the bot was deleted (0 if not deleted).
  * **`team`**: Represents a Mattermost team.
    * `team`:
      * `name`: The unique name of the team.
