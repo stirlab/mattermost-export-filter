@@ -75,7 +75,7 @@ The data is in JSONL format, meaning each line is a valid JSON object. This is g
      * `reactions`: An array of reactions to the post.
      * `replies`: An array of replies to the post.
      * `attachments`: An array of attachments to the post.
- * **`direct_channel`**: Represents a direct message channel between two users.
+ * **`direct_channel`**: Represents a direct message channel between users.
    * `direct_channel`:
      * `members`: An array of usernames of the users in the direct channel.
      * `favorited_by`: An array of usernames of users who have favorited the channel.
