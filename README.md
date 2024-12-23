@@ -95,8 +95,17 @@ You can combine multiple filter options. Each filter type has two forms:
 ### Additional Options
 
 - `--include-system-messages` - Include system-generated messages
+- `--remap-file <path>` - Path to YAML file containing name remapping rules
 - `--debug` - Enable debug logging
 - `--output <dir>` - Specify output directory (default: "output")
+
+### Name Remapping
+
+The tool supports remapping user, team, and channel names using an INI-style configuration file, by setting the `--remap-file` argument to the path of a INI file containing the remappings.
+
+See [example-remap.ini](example-remap.ini) for the remapping structure.
+
+Remapping is applied after filtering, so only included entries are remapped.
 
 ### Examples
 

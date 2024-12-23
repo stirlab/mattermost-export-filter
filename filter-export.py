@@ -17,8 +17,9 @@ It always includes the version entry in the output file.
 import argparse
 import json
 import logging
+import configparser
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Mapping
 
 
 class MattermostFilter:
@@ -45,11 +46,19 @@ class MattermostFilter:
     # Statistics constants
     STATS_ATTACHMENTS = "attachments"
 
+    # Valid remapping types
+    VALID_REMAP_TYPES = {
+        'users',
+        'teams',
+        'channels',
+    }
+
     # Common dictionary keys
     TEAM_KEY = "team"
     ROLE_KEY = "role"
     USER_KEY = "user"
     BOT_KEY = "bot"
+    OWNER_KEY = "owner"
     CHANNEL_KEY = "channel"
     POST_KEY = "post"
     DIRECT_CHANNEL_KEY = "direct_channel"
@@ -80,6 +89,7 @@ class MattermostFilter:
         direct_post: Optional[List[str]] = None,
         direct_posts: bool = False,
         include_system_messages: bool = False,
+        remap_file: Optional[Path] = None,
         debug: bool = False,
     ) -> None:
         """
@@ -123,9 +133,13 @@ class MattermostFilter:
         :type direct_posts: bool
         :param include_system_messages: If True, include system messages.
         :type include_system_messages: bool
+        :param remap_file: Path to INI file containing name remapping rules.
+        :type remap_file: Optional[Path]
         :param debug: Enable debug logging.
         :type debug: bool
         """
+        self.debug = debug
+        self._setup_logging()
         self.input_dir = input_dir
         self.output_dir = output_dir
         self.input_jsonl = input_dir / self.IMPORT_JSONL
@@ -150,9 +164,20 @@ class MattermostFilter:
         self.direct_channels = direct_channels
         self.direct_post = [frozenset(dp.split(":")) for dp in (direct_post or [])]
         self.direct_posts = direct_posts
-        self.debug = debug
         self.include_system_messages = include_system_messages
+        self.remap_rules: Optional[Mapping[str, Mapping[str, str]]] = None
+        if remap_file:
+            self._load_remap_rules(remap_file)
         self.version_entry: Optional[Dict[str, Any]] = None
+        self._remap_dispatch = {
+            self.TEAM_TYPE: self._remap_team,
+            self.USER_TYPE: self._remap_user,
+            self.BOT_TYPE: self._remap_bot,
+            self.CHANNEL_TYPE: self._remap_channel,
+            self.POST_TYPE: self._remap_post,
+            self.DIRECT_CHANNEL_TYPE: self._remap_direct_channel,
+            self.DIRECT_POST_TYPE: self._remap_direct_post,
+        }
 
         # Initialize statistics
         self.stats = {
@@ -179,7 +204,6 @@ class MattermostFilter:
             self.DIRECT_POST_TYPE: self._filter_direct_post,
         }
 
-        self._setup_logging()
 
     def _setup_logging(self) -> None:
         """
@@ -205,6 +229,86 @@ class MattermostFilter:
         logging.debug(f"Found version entry: {self.version_entry}")
         outfile.write(json.dumps(self.version_entry) + "\n")
 
+    def _validate_remap_rules(self, config: configparser.ConfigParser, file_path: Path) -> None:
+        """
+        Validate remapping rules structure and content.
+
+        :param config: The loaded ConfigParser object
+        :type config: configparser.ConfigParser
+        :param file_path: Path to the rules file (for error messages)
+        :type file_path: Path
+        :raises: ValueError if validation fails
+        """
+        invalid_types = set(config.sections()) - self.VALID_REMAP_TYPES
+        if invalid_types:
+            raise ValueError(
+                f"Invalid remap types in {file_path}: {', '.join(invalid_types)}. "
+                f"Valid types are: {', '.join(sorted(self.VALID_REMAP_TYPES))}"
+            )
+
+    def _load_remap_rules(self, remap_file: Path) -> None:
+        """
+        Load and validate remapping rules from INI file.
+
+        :param remap_file: Path to INI remapping rules file
+        :type remap_file: Path
+        :raises: configparser.Error if file is invalid
+        :raises: FileNotFoundError if file doesn't exist
+        :raises: ValueError if file contains invalid remap types or invalid mappings
+        """
+        try:
+            config = configparser.ConfigParser()
+            config.read(remap_file)
+            self._validate_remap_rules(config, remap_file)
+            rules = {}
+            for section in config.sections():
+                rules[section] = dict(config[section])
+            self.remap_rules = rules
+            logging.debug(f"Loaded remapping rules from {remap_file}")
+        except configparser.Error as e:
+            logging.error(f"Error parsing remap file: {e}")
+            raise
+        except FileNotFoundError:
+            logging.error(f"Remap file not found: {remap_file}")
+            raise
+
+    def _apply_mapping(self, map_type: str, value: str) -> str:
+        """
+        Apply a single remapping rule.
+
+        :param map_type: Type of mapping to apply (users, teams, etc)
+        :type map_type: str
+        :param value: Value to remap
+        :type value: str
+        :return: Remapped value or original if no mapping exists
+        :rtype: str
+        """
+        if not self.remap_rules or map_type not in self.remap_rules:
+            return value
+        return self.remap_rules[map_type].get(value, value)
+
+    def _remap_entry(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Dispatch remapping to the appropriate method based on entry type.
+
+        :param entry: The entry to remap
+        :type entry: Dict[str, Any]
+        :return: Remapped entry
+        :rtype: Dict[str, Any]
+        """
+        if not self.remap_rules:
+            return entry
+
+        entry_type = entry.get(self.TYPE_KEY)
+        if not entry_type:
+            return entry
+
+        remap_func = self._remap_dispatch.get(entry_type)
+        if remap_func:
+            return remap_func(entry)
+
+        return entry
+
     def _process_line(self, line: str, line_number: int, outfile) -> None:
         """
         Process a single line from the JSONL file.
@@ -224,7 +328,8 @@ class MattermostFilter:
             if entry.get("type") == "version":
                 self._process_version_entry(entry, outfile)
             elif self._filter_entry(entry):
-                outfile.write(json.dumps(entry) + "\n")
+                remapped_entry = self._remap_entry(entry)
+                outfile.write(json.dumps(remapped_entry) + "\n")
                 entry_type = entry.get(self.TYPE_KEY)
                 if entry_type in self.stats:
                     self.stats[entry_type] += 1
@@ -561,6 +666,102 @@ class MattermostFilter:
         except Exception as e:
             logging.error(f"Unexpected error copying attachment {rel_path}: {e}")
 
+    def _remap_team(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Remap team names."""
+        team_data = entry.get(self.TEAM_KEY, {})
+        if name := team_data.get(self.NAME_KEY):
+            new_name = self._apply_mapping('teams', name)
+            if new_name != name:
+                logging.debug(f"Remapped team name: {name} -> {new_name}")
+            team_data[self.NAME_KEY] = new_name
+        return entry
+
+    def _remap_user(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Remap usernames."""
+        user_data = entry.get(self.USER_KEY, {})
+        if username := user_data.get(self.USERNAME_KEY):
+            new_username = self._apply_mapping('users', username)
+            if new_username != username:
+                logging.debug(f"Remapped username: {username} -> {new_username}")
+            user_data[self.USERNAME_KEY] = new_username
+        return entry
+
+    def _remap_bot(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Remap bot usernames and owners."""
+        bot_data = entry.get(self.BOT_KEY, {})
+        if owner := bot_data.get(self.OWNER_KEY):
+            new_owner = self._apply_mapping('users', owner)
+            if new_owner != owner:
+                logging.debug(f"Remapped bot owner: {owner} -> {new_owner}")
+            bot_data[self.OWNER_KEY] = new_owner
+        return entry
+
+    def _remap_channel(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Remap channel names and teams."""
+        channel_data = entry.get(self.CHANNEL_KEY, {})
+        if team := channel_data.get(self.TEAM_KEY):
+            new_team = self._apply_mapping('teams', team)
+            if new_team != team:
+                logging.debug(f"Remapped channel team: {team} -> {new_team}")
+            channel_data[self.TEAM_KEY] = new_team
+        if name := channel_data.get(self.NAME_KEY):
+            new_name = self._apply_mapping('channels', name)
+            if new_name != name:
+                logging.debug(f"Remapped channel name: {name} -> {new_name}")
+            channel_data[self.NAME_KEY] = new_name
+        return entry
+
+    def _remap_post(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Remap post teams, channels, and users."""
+        post_data = entry.get(self.POST_KEY, {})
+        if team := post_data.get(self.TEAM_KEY):
+            new_team = self._apply_mapping('teams', team)
+            if new_team != team:
+                logging.debug(f"Remapped post team: {team} -> {new_team}")
+            post_data[self.TEAM_KEY] = new_team
+        if channel := post_data.get(self.CHANNEL_KEY):
+            new_channel = self._apply_mapping('channels', channel)
+            if new_channel != channel:
+                logging.debug(f"Remapped post channel: {channel} -> {new_channel}")
+            post_data[self.CHANNEL_KEY] = new_channel
+        if user := post_data.get(self.USER_KEY):
+            new_user = self._apply_mapping('users', user)
+            if new_user != user:
+                logging.debug(f"Remapped post user: {user} -> {new_user}")
+            post_data[self.USER_KEY] = new_user
+        return entry
+
+    def _remap_direct_channel(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Remap direct channel member usernames."""
+        dc_data = entry.get(self.DIRECT_CHANNEL_KEY, {})
+        if members := dc_data.get(self.MEMBERS_KEY):
+            new_members = []
+            for member in members:
+                new_member = self._apply_mapping('users', member)
+                if new_member != member:
+                    logging.debug(f"Remapped direct channel member: {member} -> {new_member}")
+                new_members.append(new_member)
+            dc_data[self.MEMBERS_KEY] = new_members
+        return entry
+
+    def _remap_direct_post(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Remap direct post member usernames and user."""
+        dp_data = entry.get(self.DIRECT_POST_KEY, {})
+        if members := dp_data.get(self.CHANNEL_MEMBERS_KEY):
+            new_members = []
+            for member in members:
+                new_member = self._apply_mapping('users', member)
+                if new_member != member:
+                    logging.debug(f"Remapped direct post member: {member} -> {new_member}")
+                new_members.append(new_member)
+            dp_data[self.CHANNEL_MEMBERS_KEY] = new_members
+        if user := dp_data.get(self.USER_KEY):
+            new_user = self._apply_mapping('users', user)
+            if new_user != user:
+                logging.debug(f"Remapped direct post user: {user} -> {new_user}")
+            dp_data[self.USER_KEY] = new_user
+        return entry
+
     def _process_attachments(self, entry: Dict[str, Any]) -> None:
         """
         Extract and copy attachments from post/direct_post entries.
@@ -742,6 +943,11 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Include system messages in post and direct post entries.",
     )
+    parser.add_argument(
+        "--remap-file",
+        type=Path,
+        help="Path to INI file containing name remapping rules"
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
 
     return parser
@@ -804,6 +1010,7 @@ def _run_filter(args: argparse.Namespace) -> int:
             direct_post=args.direct_post,
             direct_posts=args.direct_posts,
             include_system_messages=args.include_system_messages,
+            remap_file=args.remap_file,
             debug=args.debug,
         )
         filter_obj.run()
